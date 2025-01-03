@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"flag"
+	"log"
 )
 
 const (
@@ -285,103 +287,107 @@ func EncryptFile(inputFile, outputFile, publicKeyFile string) error {
 			end = len(data)
 		}
 		chunk := data[i:end]
-
-		// Convert chunk to big.Int
-		m := new(big.Int).SetBytes(chunk)
-
-		// Encrypt: c = m^e % n
-		c := new(big.Int).Exp(m, e, n)
-
-		// Append the encrypted chunk
-		encryptedChunks = append(encryptedChunks, c.Bytes()...)
+		
+		// Encrypt the chunk
+		chunkBigInt := new(big.Int).SetBytes(chunk)
+		encryptedChunk := new(big.Int).Exp(chunkBigInt, e, n)
+		
+		// Append the encrypted chunk as bytes
+		encryptedChunks = append(encryptedChunks, encryptedChunk.Bytes()...)
 	}
-
-	// Write the encrypted data to the output file
+		
+	// Write the encrypted chunks to the output file
 	return os.WriteFile(outputFile, encryptedChunks, 0600)
 }
-
+		
+// This function takes an encrypted file and decrypts it using a private key
 func DecryptFile(inputFile, outputFile, privateKeyFile string) error {
-	// Load the private key (n and d) from the file
+	// Load n and d from privateKeyFile
 	n, d, err := LoadPrivateKey(privateKeyFile)
 	if err != nil {
 		return err
 	}
 
-	// Read the encrypted file
+	// Read the encrypted input file
 	data, err := os.ReadFile(inputFile)
 	if err != nil {
 		return err
 	}
 
-	// Since encryption splits the file into chunks, decryption must process chunks
-	chunkSize := len(n.Bytes()) // This matches the modulus size
+	// Chunk size in bytes (based on key size)
+	chunkSize := len(n.Bytes())
 
 	var decryptedChunks []byte
 	for i := 0; i < len(data); i += chunkSize {
 		// Get the current chunk
-		/*
-		   For this to make sense assume that we are at the start of the file where i is at byte 0 and the chunk size is 100
-		   the end of the current chunk would be 100 but in the second iteration the i is 100 and the end is 200 effectively choosing the next chunk
-		   how ever if the end index extends the end of the data then the end will be the final index of the data which is the len of data
-		*/
 		end := i + chunkSize
 		if end > len(data) {
 			end = len(data)
 		}
 		chunk := data[i:end]
 
-		// Convert chunk to big.Int
-		c := new(big.Int).SetBytes(chunk)
+		// Decrypt the chunk
+		chunkBigInt := new(big.Int).SetBytes(chunk)
+		decryptedChunk := new(big.Int).Exp(chunkBigInt, d, n)
 
-		// Decrypt: m = c^d % n
-		m := new(big.Int).Exp(c, d, n)
-
-		// Append the decrypted chunk
-		decryptedChunks = append(decryptedChunks, m.Bytes()...)
+		// Append the decrypted chunk as bytes
+		decryptedChunks = append(decryptedChunks, decryptedChunk.Bytes()...)
 	}
 
-	// Write the decrypted data to the output file
+	// Write the decrypted chunks to the output file
 	return os.WriteFile(outputFile, decryptedChunks, 0600)
 }
 
-func RSAKeyGen(bits int) bool {
-	n, e, d, _, err := GenerateRSAKeys(BITS)
-	if err != nil {
-		fmt.Println("Error generating RSA keys:", err)
-		return false
-	}
-
-	// Save public and private keys to files
-	err = SavePublicKey("id_rsa.pub", n, e)
-	if err != nil {
-		fmt.Println("Error saving public key:", err)
-		return false
-	}
-
-	err = SavePrivateKey("id_rsa", n, d)
-	if err != nil {
-		fmt.Println("Error saving private key:", err)
-		return false
-	}
-
-	return true
-}
-
+// Main function to demonstrate the RSA key generation, encryption, and decryption
 func main() {
+	// Define flags
+	action := flag.String("action", "", "Action to perform: generate_keys, encrypt, decrypt")
+	keyFile := flag.String("keyfile", "", "Path to the key file (public or private key)")
+	inputFile := flag.String("input", "", "Path to the input file")
+	outputFile := flag.String("output", "", "Path to the output file")
+	bits := flag.Int("bits", 2048, "Number of bits for RSA key generation")
 
-	// TODO: CLI call to RSAKeyGen
-	// Example usage
-	if !RSAKeyGen(BITS) {
-		fmt.Println("An error has occured, Exiting...")
-		return
+	flag.Parse()
+
+	switch *action {
+	case "generate_keys":
+		// Generate RSA keys and save them to files
+		if *keyFile == "" {
+			log.Fatal("Key file prefix must be specified using -keyfile")
+		}
+		n, e, d, _, err := GenerateRSAKeys(*bits)
+		if err != nil {
+			log.Fatalf("Failed to generate RSA keys: %v", err)
+		}
+		publicKeyFile := *keyFile + "_public.pem"
+		privateKeyFile := *keyFile + "_private.pem"
+		if err := SavePublicKey(publicKeyFile, n, e); err != nil {
+			log.Fatalf("Failed to save public key: %v", err)
+		}
+		if err := SavePrivateKey(privateKeyFile, n, d); err != nil {
+			log.Fatalf("Failed to save private key: %v", err)
+		}
+		fmt.Printf("Keys generated and saved to %s and %s\n", publicKeyFile, privateKeyFile)
+
+	case "encrypt":
+		if *keyFile == "" || *inputFile == "" || *outputFile == "" {
+			log.Fatal("All flags -keyfile, -input, and -output are required for encryption")
+		}
+		if err := EncryptFile(*inputFile, *outputFile, *keyFile); err != nil {
+			log.Fatalf("Failed to encrypt file: %v", err)
+		}
+		fmt.Println("File encrypted successfully")
+
+	case "decrypt":
+		if *keyFile == "" || *inputFile == "" || *outputFile == "" {
+			log.Fatal("All flags -keyfile, -input, and -output are required for decryption")
+		}
+		if err := DecryptFile(*inputFile, *outputFile, *keyFile); err != nil {
+			log.Fatalf("Failed to decrypt file: %v", err)
+		}
+		fmt.Println("File decrypted successfully")
+
+	default:
+		log.Fatal("Invalid action. Use -action=generate_keys, -action=encrypt, or -action=decrypt")
 	}
-	// TODO: CLI call to EncryptFile
-	// First Param is the plain text file, Second Param is the name of the output file to be created, Third Param is the name of the publickey file
-	EncryptFile("testfile.txt", "encrypted.txt", "id_rsa.pub")
-
-	// TODO: CLI call to DecryptFile
-	// First Param is the encrypted text file, Second Param is the name of the output file to be created, Third Param is the name of the privatekey file
-	DecryptFile("encrypted.txt", "decrypted.txt", "id_rsa")
-
-	// TODO: make user customize the constants above using dash (-) options (!! THIS IS OPTIONAL !!)
 }
