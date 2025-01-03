@@ -2,3 +2,4 @@ my_file_decrypted.txt
 my_file_encrypted.bin
 my_rsa_private.pem
 my_rsa_public.pem
+rsa
